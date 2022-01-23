@@ -175,6 +175,16 @@ public class ReflectionUtils {
     }
 
     /**
+     * Получить первый generic параметр у метода
+     *
+     * @param from метод, generic значение которого нужно получить
+     * @return generic тип или nell
+     */
+    public static @Nullable Class<?> findXGeneric(@NotNull Method from) {
+        return findXGeneric(from.getGenericReturnType());
+    }
+
+    /**
      * Получить первый generic параметр у поля
      *
      * @param from поле, generic значение которого нужно получить
@@ -270,10 +280,10 @@ public class ReflectionUtils {
     public static <T> @NotNull T safeInstance(@NotNull Class<T> clazz, Object... args) {
         try {
             return clazz
-                    .getConstructor(Arrays.stream(args)
-                            .map(e -> e != null ? e.getClass() : null)
-                            .toArray(Class[]::new))
-                    .newInstance(args);
+                .getConstructor(Arrays.stream(args)
+                    .map(e -> e != null ? e.getClass() : null)
+                    .toArray(Class[]::new))
+                .newInstance(args);
         } catch (IllegalAccessException | NoSuchMethodException | InvocationTargetException | InstantiationException e) {
             throw new RuntimeException(e);
         }
