@@ -13,18 +13,19 @@ import java.util.stream.Stream;
 
 @SuppressWarnings({"rawtypes", "unused"})
 public class ReflectionUtils {
-    private final static Pattern PROXY_NAME_PATTERN = Pattern.compile("\\$(.+)Proxy\\$(.*)$");
+    private final static Pattern PROXY_NAME_PATTERN = Pattern.compile("\\$(.+)(:?Proxy|EnhancerBySpringCGLIB)\\$(.*)$");
 
     /**
      * Быстрый поиск по карте, ключом в которой является класс, метод учитывает наследование классов. Если
-     * искомого класса нет, то метод выдаст наиболее близкого наследника этого класса в карте
+     * искомого класса нет, то метод выдаст наиболее близкого наследника этого класса в карте. После нахождения значения,
+     * значение будет добавлено в карту как.
      *
      * @param input входящая карта с классами
      * @param key ключ для поиска
      * @param <T> тип значений карты
      * @return значение или null если не нашел (так-же будет кеширован null на текущий ключ)
      */
-    public static <T> @Nullable T findOnClassMap(@NotNull Map<Class<?>, T> input, Class<?> key) {
+    public static <T> @Nullable T findOnClassMapCache(@NotNull Map<Class<?>, T> input, Class<?> key) {
         if(input.containsKey(key)) {
             return input.get(key);
         }
@@ -40,12 +41,59 @@ public class ReflectionUtils {
         }
 
         if(found.size() > 0) {
-            var resultValue = input.get(getBoundNearestClass(key, found));
+            var nearest = getBoundNearestClass(key, found);
+            var resultValue = input.get(nearest);
             input.put(key, resultValue);
             return resultValue;
         }
 
         input.put(key, null);
+
+        return null;
+    }
+
+    /**
+     * Быстрый поиск по карте, ключом в которой является класс, метод учитывает наследование классов. Если
+     * искомого класса нет, то метод выдаст наиболее близкого наследника этого класса в карте
+     *
+     * @param input входящая карта с классами
+     * @param key ключ для поиска
+     * @param <T> тип значений карты
+     * @return значение или null если не нашел (так-же будет кеширован null на текущий ключ)
+     */
+    public static <T> @Nullable T findOnClassMap(@NotNull Map<Class<?>, T> input, Class<?> key) {
+        return findOnClassMap(input, key, Set.of(Object.class));
+    }
+
+    /**
+     * Быстрый поиск по карте, ключом в которой является класс, метод учитывает наследование классов. Если
+     * искомого класса нет, то метод выдаст наиболее близкого наследника этого класса в карте
+     *
+     * @param input входящая карта с классами
+     * @param key ключ для поиска
+     * @param <T> тип значений карты
+     * @return значение или null если не нашел (так-же будет кеширован null на текущий ключ)
+     */
+    public static <T> @Nullable T findOnClassMap(@NotNull Map<Class<?>, T> input, Class<?> key, Set<Class<?>> excludes) {
+        if(input.containsKey(key)) {
+            return input.get(key);
+        }
+
+        var found = new HashSet<Class<?>>();
+
+        for (var current: input.entrySet()) {
+            var parent = current.getKey();
+
+            if(parent.isAssignableFrom(key) && !excludes.contains(parent)) {
+                found.add(current.getKey());
+            }
+        }
+
+        if(found.size() > 0) {
+            var nearest = getBoundNearestClass(key, found);
+
+            return input.get(nearest);
+        }
 
         return null;
     }
@@ -70,14 +118,29 @@ public class ReflectionUtils {
      */
     private static Integer getParentDistance(Class<?> child, Class<?> parent) {
         var distance = 0;
-        var current = parent;
+        var current = new HashSet<Class<?>>();
 
-        while(current != null) {
-            if(current == child) {
+        current.add(parent);
+
+        while(current.size() != 0) {
+            if(current.contains(child)) {
                 break;
             }
 
-            current = current.getSuperclass();
+            var newSet = new HashSet<Class<?>>();
+
+            for(var sub: current) {
+                var superclass = sub.getSuperclass();
+
+                if(superclass != null) {
+                    newSet.add(superclass);
+                }
+
+                newSet.addAll(List.of(sub.getInterfaces()));
+            }
+
+            current = newSet;
+
             distance++;
         }
 
@@ -128,7 +191,7 @@ public class ReflectionUtils {
      * @return найденное поле-идентификатор
      */
     public static Field findTypeId(Class<?> clazz) {
-        var fields = scanFields(clazz);
+        var fields = scanFields(clazz, Set.of(Object.class));
         var idField = (Field) null;
 
         for(var field: fields) {
@@ -147,16 +210,37 @@ public class ReflectionUtils {
     /**
      * Получить первый generic параметр из типа
      *
-     * @param genericsParams тип из которого нужно получить параметер
+     * @param genericsParams тип из которого нужно получить параметр
+     * @param index индекс параметра для получения
      * @return generic тип или nell
      */
-    public static @Nullable Class<?> findXGeneric(@NotNull Type genericsParams) {
+    public static @Nullable Type findXGenericType(@NotNull Type genericsParams, Integer index) {
         if(genericsParams instanceof ParameterizedType) {
             var pt = (ParameterizedType) genericsParams;
             var generics = pt.getActualTypeArguments();
 
-            if(generics.length > 0) {
-                var generic = generics[0];
+            if(generics.length > index) {
+                return generics[index];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Получить первый generic параметр из типа
+     *
+     * @param genericsParams тип из которого нужно получить параметр
+     * @param index индекс параметра для получения
+     * @return generic тип или nell
+     */
+    public static @Nullable Class<?> findXGeneric(@NotNull Type genericsParams, Integer index) {
+        if(genericsParams instanceof ParameterizedType) {
+            var pt = (ParameterizedType) genericsParams;
+            var generics = pt.getActualTypeArguments();
+
+            if(generics.length > index) {
+                var generic = generics[index];
 
                 if(generic instanceof Class<?>) {
                     return (Class<?>) generic;
@@ -178,10 +262,43 @@ public class ReflectionUtils {
      * Получить первый generic параметр у метода
      *
      * @param from метод, generic значение которого нужно получить
+     * @param index индекс параметра для получения
+     * @return generic тип или nell
+     */
+    public static @Nullable Class<?> findXGeneric(@NotNull Method from, Integer index) {
+        return findXGeneric(from.getGenericReturnType(), index);
+    }
+
+    /**
+     * Получить первый generic параметр у поля
+     *
+     * @param from поле, generic значение которого нужно получить
+     * @param index индекс параметра для получения
+     * @return generic тип или nell
+     */
+    public static @Nullable Class<?> findXGeneric(@NotNull Field from, Integer index) {
+        return findXGeneric(from.getGenericType(), index);
+    }
+
+    /**
+     * Получить первый generic параметр у класса
+     *
+     * @param from класс из супер класса, которого нужно получить generic
+     * @param index индекс параметра для получения
+     * @return generic тип или null
+     */
+    public static @Nullable Class<?> findXGeneric(@NotNull Class<?> from, Integer index) {
+        return findXGeneric(from.getGenericSuperclass(), index);
+    }
+
+    /**
+     * Получить первый generic параметр у метода
+     *
+     * @param from метод, generic значение которого нужно получить
      * @return generic тип или nell
      */
     public static @Nullable Class<?> findXGeneric(@NotNull Method from) {
-        return findXGeneric(from.getGenericReturnType());
+        return findXGeneric(from.getGenericReturnType(), 0);
     }
 
     /**
@@ -191,7 +308,7 @@ public class ReflectionUtils {
      * @return generic тип или nell
      */
     public static @Nullable Class<?> findXGeneric(@NotNull Field from) {
-        return findXGeneric(from.getGenericType());
+        return findXGeneric(from.getGenericType(), 0);
     }
 
     /**
@@ -201,7 +318,7 @@ public class ReflectionUtils {
      * @return generic тип или null
      */
     public static @Nullable Class<?> findXGeneric(@NotNull Class<?> from) {
-        return findXGeneric(from.getGenericSuperclass());
+        return findXGeneric(from.getGenericSuperclass(), 0);
     }
 
     /**
@@ -537,26 +654,26 @@ public class ReflectionUtils {
     }
 
     public static @NotNull Map<String, Method> scanMethodsToMap(Class<?> clazz) {
-        return scanMethodsToMap(clazz, Set.of());
+        return scanMethodsToMap(clazz, Set.of(Object.class));
     }
 
     public static @NotNull Map<String, Field> scanFieldsToMap(Class<?> clazz) {
-        return scanFieldsToMap(clazz, Set.of());
+        return scanFieldsToMap(clazz, Set.of(Object.class));
     }
 
     public static @NotNull Map<String, AccessibleObject> scanToMap(Class<?> clazz) {
-        return scanToMap(clazz, Set.of());
+        return scanToMap(clazz, Set.of(Object.class));
     }
 
     public static @NotNull List<Method> scanMethods(Class<?> clazz) {
-        return scanMethods(clazz, Set.of());
+        return scanMethods(clazz, Set.of(Object.class));
     }
 
     public static @NotNull List<Field> scanFields(Class<?> clazz) {
-        return scanFields(clazz, Set.of());
+        return scanFields(clazz, Set.of(Object.class));
     }
 
     public static @NotNull List<AccessibleObject> scan(Class<?> clazz) {
-        return scan(clazz, Set.of());
+        return scan(clazz, Set.of(Object.class));
     }
 }
