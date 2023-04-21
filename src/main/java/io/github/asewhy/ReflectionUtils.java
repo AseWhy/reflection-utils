@@ -106,7 +106,7 @@ public class ReflectionUtils {
      * @return ближайший наследник из списка
      */
     public static Class<?> getBoundNearestClass(Class<?> find, @NotNull Collection<Class<?>> list) {
-        return list.stream().min((a, b) -> getParentDistance(a, find) > getParentDistance(b, find) ? 1 : 0).orElse(null);
+        return list.stream().min(Comparator.comparingInt(a -> getParentDistance(a, find))).orElse(null);
     }
 
     /**
@@ -331,15 +331,11 @@ public class ReflectionUtils {
      */
     public static Object safeInvoke(@NotNull Method method, Object caller, Object ...args) {
         try {
-            var access = method.canAccess(caller);
+            if(!method.canAccess(caller)) {
+                method.setAccessible(true);
+            }
 
-            method.setAccessible(true);
-
-            var found = method.invoke(caller, args);
-
-            method.setAccessible(access);
-
-            return found;
+            return method.invoke(caller, args);
         } catch (IllegalArgumentException e) {
             throw new RuntimeException("Argument type mismatch exception on " + paramsToString(objectsToClass(args)) + " and " + paramsToString(method.getParameterTypes()));
         } catch (IllegalAccessException | InvocationTargetException e) {
@@ -375,13 +371,11 @@ public class ReflectionUtils {
      */
     public static void safeSet(@NotNull Field field, Object caller, Object set) {
         try {
-            var access = field.canAccess(caller);
-
-            field.setAccessible(true);
+            if(!field.canAccess(caller)) {
+                field.setAccessible(true);
+            }
 
             field.set(caller, set);
-
-            field.setAccessible(access);
         } catch (IllegalAccessException e) {
             throw new RuntimeException(e);
         }
@@ -396,11 +390,10 @@ public class ReflectionUtils {
      */
     public static <T> @NotNull T safeInstance(@NotNull Class<T> clazz, Object... args) {
         try {
-            return clazz
-                .getConstructor(Arrays.stream(args)
-                    .map(e -> e != null ? e.getClass() : null)
-                    .toArray(Class[]::new))
-                .newInstance(args);
+            return clazz.getConstructor(Arrays.stream(args)
+                .map(e -> e != null ? e.getClass() : null)
+                .toArray(Class[]::new))
+            .newInstance(args);
         } catch (IllegalAccessException | NoSuchMethodException | InvocationTargetException | InstantiationException e) {
             throw new RuntimeException(e);
         }
@@ -415,15 +408,11 @@ public class ReflectionUtils {
      */
     public static Object safeAccess(@NotNull Field field, Object caller) {
         try {
-            var access = field.canAccess(caller);
+            if(!field.canAccess(caller)) {
+                field.setAccessible(true);
+            }
 
-            field.setAccessible(true);
-
-            var found = field.get(caller);
-
-            field.setAccessible(access);
-
-            return found;
+            return field.get(caller);
         } catch (IllegalAccessException e) {
             throw new RuntimeException(e);
         }
